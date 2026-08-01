@@ -1,0 +1,76 @@
+{
+  "network": "robinhood",
+  "chainId": 4663,
+  "rpcUrl": "https://robinhood-mainnet.g.alchemy.com/v2/alch_XUun7agJSoS7vZz5tylMO",
+  "indexerUrl": "",
+  "relayerUrl": "",
+  "explorer": "",
+  "deployBlock": 21248162,
+  "logChunk": 1000,
+  "merkleTreeHeight": 26,
+  "admin": "0x93080bdF26050307d410d372640D4398397E0A6E",
+  "vault": "0xf54013b8BE8fdFcF0CD1fD727c803F16c2450736",
+  "swapLogic": "0x52445Ae1B988CfDc668EB15628629ED7d0890C6A",
+  "swapLogicImpl": "0x9FbfF4eac26bDE19A60bbF177fD27f4C18e70B4B",
+  "verifier2": "0x3d7bEA6294BC033fAA7e0e06F2D94088106CDb79",
+  "hasher": "0x71C526201461b1DFD4964429439f656378eFC2bd",
+  "hasher4": "0x03b2637fe5d20d24457236974bCECe6ecf22587e",
+  "weth": "0x0bd7d308f8e1639fab988df18a8011f41eacad73",
+  "routers": {
+    "v2": "0x89e5db8b5aa49aa85ac63f691524311aeb649eba",
+    "v3": "0xcaf681a66d020601342297493863e78c959e5cb2",
+    "v4": "0x8876789976decbfcbbbe364623c63652db8c0904"
+  },
+  "quoters": {
+    "v3": "0x33e885ed0ec9bf04ecfb19341582aadcb4c8a9e7",
+    "v4": "0x8dc178efb8111bb0973dd9d722ebeff267c98f94"
+  },
+  "v3Pools": [
+    { "tokenA": "0x0bd7d308f8e1639fab988df18a8011f41eacad73", "tokenB": "0x5fc5360d0400a0fd4f2af552add042d716f1d168", "fee": 100 },
+    { "tokenA": "0x0bd7d308f8e1639fab988df18a8011f41eacad73", "tokenB": "0x020bfc650a365f8bb26819deaabf3e21291018b4", "fee": 10000 },
+    { "tokenA": "0x5fc5360d0400a0fd4f2af552add042d716f1d168", "tokenB": "0x020bfc650a365f8bb26819deaabf3e21291018b4", "fee": 10000 },
+    { "tokenA": "0x0bd7d308f8e1639fab988df18a8011f41eacad73", "tokenB": "0x39dbed3a2bd333467115de45665cc57f813c4571", "fee": 10000 },
+    { "tokenA": "0x5fc5360d0400a0fd4f2af552add042d716f1d168", "tokenB": "0x39dbed3a2bd333467115de45665cc57f813c4571", "fee": 10000 }
+  ],
+  "nativeCurrency": {
+    "name": "Ether",
+    "symbol": "ETH",
+    "decimals": 18
+  },
+  "protocolFee": {
+    "swapBps": 50,
+    "withdrawBps": 30,
+    "recipient": "0x6cEE2DC8A42A5AA3f28799ea8Ebd23Ea5e07cc08",
+    "feeAssets": [
+      "eth",
+      "usdg"
+    ]
+  },
+  "assets": {
+    "eth": {
+      "token": "0x0000000000000000000000000000000000000000",
+      "decimals": 18,
+      "native": true
+    },
+    "usdg": {
+      "token": "0x5fc5360d0400a0fd4f2af552add042d716f1d168",
+      "decimals": 6,
+      "native": false
+    },
+    "cashcat": {
+      "token": "0x020bfc650a365f8bb26819deaabf3e21291018b4",
+      "decimals": 18,
+      "native": false
+    },
+    "pipedog": {
+      "token": "0x5Cb6F181081301b44905F3ae15419112ecaBd8A6",
+      "decimals": 18,
+      "native": false
+    },
+    "pons": {
+      "token": "0x39dBED3a2bd333467115dE45665cC57F813C4571",
+      "decimals": 18,
+      "native": false
+    }
+  }
+}
