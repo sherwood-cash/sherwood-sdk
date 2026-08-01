@@ -107,6 +107,18 @@ helpers (`resolveRoute`, `quoteAmountOut`, `encodeV3SingleRoute`, …), the ABIs
 - Memecoins are **swap-only**: sell them back to a quote asset (ETH/USDG) to withdraw. The
   relayer only quotes a non-zero fee for ETH and USDG.
 
+## MCP server
+
+For LLM agents, a ~120-line MCP (Model Context Protocol) server over this SDK is in
+[`examples/mcp-server.mjs`](./examples/mcp-server.mjs) — tools `get_status`, `get_balances`,
+`quote_swap`, `deposit`, `swap`, `withdraw`, `consolidate`. Custody stays agent-side via
+`SHERWOOD_PRIVATE_KEY`.
+
+```bash
+npm i @modelcontextprotocol/sdk zod
+SHERWOOD_PRIVATE_KEY=0x… node examples/mcp-server.mjs
+```
+
 ## License
 
 MIT
