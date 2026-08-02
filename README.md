@@ -109,15 +109,10 @@ helpers (`resolveRoute`, `quoteAmountOut`, `encodeV3SingleRoute`, …), the ABIs
 
 ## MCP server
 
-For LLM agents, a ~120-line MCP (Model Context Protocol) server over this SDK is in
-[`examples/mcp-server.mjs`](./examples/mcp-server.mjs) — tools `get_status`, `get_balances`,
-`quote_swap`, `deposit`, `swap`, `withdraw`, `consolidate`. Custody stays agent-side via
-`SHERWOOD_PRIVATE_KEY`.
-
-```bash
-npm i @modelcontextprotocol/sdk zod
-SHERWOOD_PRIVATE_KEY=0x… node examples/mcp-server.mjs
-```
+For LLM agents, an MCP (Model Context Protocol) server built on this SDK lives in its own
+repo: **[sherwood-cash/sherwood-mcp](https://github.com/sherwood-cash/sherwood-mcp)**. It
+exposes `get_status`, `get_balances`, `quote_swap`, `deposit`, `swap`, `withdraw` and
+`consolidate` as tools; custody stays agent-side via `SHERWOOD_PRIVATE_KEY`.
 
 ## License
 
