@@ -4,7 +4,7 @@
 // swaps are relayed (the vault reimburses the relayer in-asset), deposits are self-signed.
 import { ethers, BigNumber } from 'ethers'
 import { Utxo } from './crypto/utxo.js'
-import { Keypair, deriveSwapKeypair } from './crypto/keypair.js'
+import { Keypair, deriveTemporaryKeypair } from './crypto/keypair.js'
 import { deriveKeys, signIn as deriveFromSigner, SIGN_IN_MESSAGE, type DerivedKeys } from './crypto/encryption.js'
 import { prepareTransaction, hashSwapParams } from './transaction.js'
 import { scanNotes, selectNotes, treeForEpoch, emptyTree, type OwnedNotes } from './tree.js'
@@ -434,7 +434,7 @@ export class SherwoodClient {
     // P is a ONE-TIME key (plaintext calldata) derived from the wallet key + this note's
     // blinding, so swaps stay unlinkable yet recoverable.
     const outBlinding = new Utxo({ assetId: to.assetId }).blinding
-    const outKeypair = deriveSwapKeypair(keys.keypair.privkey, outBlinding)
+    const outKeypair = deriveTemporaryKeypair(keys.keypair.privkey, outBlinding)
     const deadline = Math.floor(Date.now() / 1000) + (p.deadlineSecs ?? 1200)
 
     const swapParams: RelaySwapParams = {

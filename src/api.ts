@@ -9,6 +9,7 @@ export interface CommitmentLeaf {
   index: number // GLOBAL leaf index as emitted by the vault
   encryptedOutput: string
   swapAmount?: string | null
+  claimNote?: boolean
 }
 
 export interface RelayProof {
@@ -138,6 +139,7 @@ export class SherwoodApi {
           index: u.index,
           encryptedOutput: u.encryptedOutput,
           swapAmount: u.swapAmount ?? null,
+          claimNote: u.claimNote ?? false,
         })
       }
       const highest = page[page.length - 1].index

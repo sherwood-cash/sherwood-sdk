@@ -9,7 +9,7 @@
 import { ethers, BigNumber } from 'ethers'
 import { MerkleTree } from 'fixed-merkle-tree'
 import { Utxo } from './crypto/utxo.js'
-import { Keypair, deriveSwapKeypair } from './crypto/keypair.js'
+import { Keypair, deriveTemporaryKeypair } from './crypto/keypair.js'
 import { poseidonHash2, toFixedHex, MERKLE_TREE_HEIGHT, MERKLE_TREE_ZERO_VALUE } from './crypto/utils.js'
 import { DEPLOYMENT } from './config.js'
 import { VAULT_ABI } from './abis.js'
@@ -112,7 +112,11 @@ export async function scanNotes(
       // recompute the key from the blinding.
       if (c.swapAmount) {
         utxo.amount = BigNumber.from(c.swapAmount)
-        utxo.keypair = deriveSwapKeypair(keypair.privkey, utxo.blinding)
+        utxo.keypair = deriveTemporaryKeypair(keypair.privkey, utxo.blinding)
+      } else if (c.claimNote) {
+        // A reward-claim output: its blob holds the real amount, but its pubkey went public
+        // with the claim, so it is a one-time key derived the same way.
+        utxo.keypair = deriveTemporaryKeypair(keypair.privkey, utxo.blinding)
       }
       if (toFixedHex(utxo.getCommitment()) === c.commitment && utxo.amount.gt(0) && utxo.assetId.eq(assetId)) {
         candidates.push(utxo)

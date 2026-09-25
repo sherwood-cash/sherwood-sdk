@@ -22,7 +22,7 @@ export {
 export type { Asset, AssetConfig, Deployment } from './config.js'
 
 // Low-level primitives (for devs who want to build their own flows)
-export { Keypair, deriveSwapKeypair } from './crypto/keypair.js'
+export { Keypair, deriveTemporaryKeypair } from './crypto/keypair.js'
 export { Utxo } from './crypto/utxo.js'
 export { deriveKeys, signIn, encrypt, decrypt, SIGN_IN_MESSAGE } from './crypto/encryption.js'
 export type { DerivedKeys } from './crypto/encryption.js'
@@ -68,3 +68,5 @@ export {
 export type { SwapRoute } from './swap.js'
 
 export { VAULT_ABI, ERC20_ABI, SWAP_PARAMS_TUPLE } from './abis.js'
+/** @deprecated renamed to deriveTemporaryKeypair (same derivation, now also used for claims). */
+export { deriveTemporaryKeypair as deriveSwapKeypair } from './crypto/keypair.js'
