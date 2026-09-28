@@ -183,14 +183,17 @@ export class SherwoodApi {
     return this.get('/top-tokens')
   }
 
+  /** @deprecated The /bridge/* proxy was removed server-side (404). Use the Private Bridge: SherwoodClient.bridge* / BridgeApi. */
   bridgePrice(body: unknown): Promise<any> {
     return this.post('/bridge/price', body)
   }
 
+  /** @deprecated See bridgePrice. Use SherwoodClient.bridgeQuote. */
   bridgeQuote(body: unknown): Promise<any> {
     return this.post('/bridge/quote', body)
   }
 
+  /** @deprecated See bridgePrice. Use SherwoodClient.bridgeOrder. */
   bridgeStatus(requestId: string): Promise<any> {
     return this.get(`/bridge/intents/status?requestId=${encodeURIComponent(requestId)}`)
   }

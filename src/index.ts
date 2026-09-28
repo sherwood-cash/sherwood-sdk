@@ -3,6 +3,20 @@ export { SherwoodClient } from './client.js'
 export type { SherwoodClientOptions, Balance, ProgressFn } from './client.js'
 
 export { SherwoodApi, feeForAsset } from './api.js'
+
+// Private Bridge (ZEC / SOL / BTC <-> shielded notes)
+export { BridgeApi, BridgeApiError, bridgeAsset, deriveBridgeIdentity, isFinalBridgeStatus } from './bridge.js'
+export type {
+  BridgeOrigin,
+  BridgeReceive,
+  BridgeStatus,
+  BridgeQuote,
+  BridgeOrder,
+  BridgeOrderStatus,
+  BridgeOrderFunds,
+  BridgeResumePoint,
+  BridgeTokenInfo,
+} from './bridge.js'
 export type { RelayInfo, RelayProof, RelayExtData, RelaySwapParams, CommitmentLeaf } from './api.js'
 
 // Config / assets

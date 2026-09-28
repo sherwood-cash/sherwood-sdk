@@ -1,7 +1,7 @@
 {
   "name": "@sherwood-cash/sdk",
-  "version": "0.1.0",
-  "description": "Headless Node SDK for Sherwood Cash — deposit, scan your private balance, swap and withdraw on the Sherwood ZK privacy pool + shielded DEX (Robinhood Chain).",
+  "version": "0.2.0",
+  "description": "Headless Node SDK for Sherwood Cash — deposit, scan your private balance, swap, withdraw and bridge ZEC/SOL/BTC privately on the Sherwood ZK privacy pool + shielded DEX (Robinhood Chain).",
   "license": "MIT",
   "type": "module",
   "publishConfig": { "access": "public" },

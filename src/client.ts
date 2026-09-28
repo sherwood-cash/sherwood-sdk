@@ -12,6 +12,17 @@ import { SherwoodApi, feeForAsset, type RelaySwapParams } from './api.js'
 import { resolveRoute, quoteAmountOut, type SwapRoute } from './swap.js'
 import { VAULT_ABI, ERC20_ABI } from './abis.js'
 import {
+  BridgeApi,
+  bridgeAsset,
+  isFinalBridgeStatus,
+  type BridgeOrder,
+  type BridgeOrigin,
+  type BridgeQuote,
+  type BridgeReceive,
+  type BridgeResumePoint,
+  type BridgeStatus,
+} from './bridge.js'
+import {
   DEPLOYMENT,
   DEFAULT_API_URL,
   isNativeAsset,
@@ -52,6 +63,8 @@ export interface Balance {
 
 export class SherwoodClient {
   readonly api: SherwoodApi
+  /** The Private Bridge endpoints (/zcash/*). The bridge* methods below drive them. */
+  readonly bridgeApi: BridgeApi
   readonly provider: ethers.providers.JsonRpcProvider
   signer?: ethers.Signer
   keys?: DerivedKeys
@@ -59,6 +72,7 @@ export class SherwoodClient {
 
   constructor(opts: SherwoodClientOptions = {}) {
     this.api = new SherwoodApi(opts.apiUrl || DEFAULT_API_URL)
+    this.bridgeApi = new BridgeApi(opts.apiUrl || DEFAULT_API_URL)
     this.provider = new ethers.providers.JsonRpcProvider(opts.rpcUrl || DEPLOYMENT.rpcUrl, {
       chainId: DEPLOYMENT.chainId,
       name: DEPLOYMENT.network,
@@ -140,9 +154,24 @@ export class SherwoodClient {
     return listAssets()
   }
   asset(idOrKey: string): Asset {
-    const a = findAsset(idOrKey)
+    const q = idOrKey.toLowerCase()
+    const a =
+      findAsset(idOrKey) ??
+      [...this.extraAssets.values()].find(
+        (x) => x.key.toLowerCase() === q || x.symbol.toLowerCase() === q || x.token.toLowerCase() === q,
+      )
     if (!a) throw new Error(`unknown asset "${idOrKey}"`)
     return a
+  }
+
+  // Assets learned at runtime rather than bundled — the bridge's wZEC and cbBTC, whose
+  // addresses /zcash/status publishes. Consulted after the bundled list.
+  private readonly extraAssets = new Map<string, Asset>()
+
+  /** Make an asset the bundled deployment does not list usable by every method here. */
+  addAsset(asset: Asset): void {
+    if (findAsset(asset.token)) return
+    this.extraAssets.set(asset.token.toLowerCase(), asset)
   }
   params() {
     return this.api.params()
@@ -194,7 +223,7 @@ export class SherwoodClient {
 
   async getBalances(): Promise<Balance[]> {
     const out: Balance[] = []
-    for (const a of this.listAssets()) {
+    for (const a of [...this.listAssets(), ...this.extraAssets.values()]) {
       try {
         out.push(await this.getBalance(a.key))
       } catch {
@@ -209,25 +238,10 @@ export class SherwoodClient {
     return this.lock(async () => {
       const asset = this.asset(idOrKey)
       const signer = this.requireSigner()
-      const keys = this.requireKeys()
+      this.requireKeys()
       const amt = this.parseAmount(asset, amount)
       const baseline = await this.lastLeafIndex(asset)
-
-      // The deposit's output note lands in the live epoch; prove membership against its tree.
-      const live = await this.scan(asset)
-      const liveTree = treeForEpoch(live, live.liveEpoch)
-      const out = new Utxo({ amount: amt, keypair: keys.keypair, assetId: asset.assetId })
-
-      onProgress('Generating zero-knowledge proof…')
-      const { args, extData } = await prepareTransaction({
-        tree: liveTree.elements.length ? liveTree : emptyTree(),
-        inputs: [],
-        outputs: [out],
-        encryptionKey: keys.encryptionKey,
-        assetId: asset.assetId,
-        artifacts: this.artifacts,
-      })
-      const inEpoch = live.liveEpoch
+      const { args, extData, inEpoch } = await this.buildDepositProof(asset, amt, onProgress)
       const vault = new ethers.Contract(DEPLOYMENT.vault, VAULT_ABI, signer)
 
       if (!isNativeAsset(asset)) {
@@ -250,6 +264,30 @@ export class SherwoodClient {
       await this.waitForIndexed(asset.key, baseline)
       return tx.hash
     })
+  }
+
+  /**
+   * A deposit proof for `amount` of `asset` into our own notes, not yet submitted.
+   *
+   * A deposit spends nothing, so its root is only checked against the LIVE epoch's tree —
+   * where the output note lands — and the epoch travels with the proof, because the vault
+   * checks the root against treeIdOf(assetId, inEpoch) even for a deposit.
+   */
+  private async buildDepositProof(asset: Asset, amount: BigNumber, onProgress: ProgressFn) {
+    const keys = this.requireKeys()
+    const live = await this.scan(asset)
+    const liveTree = treeForEpoch(live, live.liveEpoch)
+    const out = new Utxo({ amount, keypair: keys.keypair, assetId: asset.assetId })
+    onProgress('Generating zero-knowledge proof…')
+    const { args, extData } = await prepareTransaction({
+      tree: liveTree.elements.length ? liveTree : emptyTree(),
+      inputs: [],
+      outputs: [out],
+      encryptionKey: keys.encryptionKey,
+      assetId: asset.assetId,
+      artifacts: this.artifacts,
+    })
+    return { args, extData, inEpoch: live.liveEpoch }
   }
 
   // ---- epoch consolidation (relayed; extAmount == 0) ----
@@ -472,6 +510,218 @@ export class SherwoodClient {
     // The output note (in `to`) is unspendable until the indexer pins its leaf + amount.
     await this.waitForIndexed(to.key, toBaseline)
     return { txHash, amountOut: this.formatAmount(to, amountOut), amountOutRaw: amountOut.toString() }
+  }
+
+  // ---- Private Bridge (/zcash/*): ZEC / SOL / BTC in and out of the pool ----
+  //
+  // IN:  bridgeDeposit() -> send the coin to order.depositAddress -> bridgeComplete()
+  //      (or bridgeShield() once the order reads 'waiting_signature').
+  // OUT: bridgeWithdraw() — one relayed withdrawal paying the order's `payTo`.
+
+  private bridgeStatusCache: { at: number; status: BridgeStatus } | null = null
+
+  /**
+   * What the bridge offers right now: origins, receive modes, confidentiality. Also
+   * registers the wZEC / cbBTC assets it publishes, so balance/swap/withdraw accept them.
+   * Cached for five minutes; pass `fresh` to refetch.
+   */
+  async bridgeStatus(fresh = false): Promise<BridgeStatus> {
+    const hit = this.bridgeStatusCache
+    if (!fresh && hit && Date.now() - hit.at < 5 * 60_000) return hit.status
+    const status = await this.bridgeApi.status()
+    for (const r of ['wzec', 'cbbtc'] as const) {
+      const a = bridgeAsset(status, r)
+      if (a) this.addAsset(a)
+    }
+    this.bridgeStatusCache = { at: Date.now(), status }
+    return status
+  }
+
+  /** What `amount` of the origin coin becomes, before fees move. Human units in. */
+  bridgeQuote(p: { amount: string; from?: BridgeOrigin; receive?: BridgeReceive }): Promise<BridgeQuote> {
+    return this.bridgeApi.quote(p.amount, p.from ?? 'zec', p.receive ?? 'eth')
+  }
+
+  /** The receive modes a deposit from `from` may pick, first the default. Mirrors the app. */
+  async bridgeReceiveOptions(from: BridgeOrigin): Promise<BridgeReceive[]> {
+    const status = await this.bridgeStatus()
+    if (from === 'btc') return status.cbbtc?.enabled ? ['cbbtc', 'eth'] : ['eth']
+    return status.wzec?.enabled ? ['eth', 'wzec'] : ['eth']
+  }
+
+  /**
+   * Open a bridge deposit into the pool.
+   *
+   * Always a 'vault' order: the bridge pays a one-time address the server derives, and
+   * that address funds a shielded deposit for whoever proves it — so this wallet never
+   * appears on chain. Send `amount` of the origin coin to `order.depositAddress` (with
+   * `order.depositMemo` when set), then call bridgeComplete(order.token).
+   *
+   * `refundTo` is an address on the ORIGIN chain (a ZEC t-address, a Solana pubkey, a BTC
+   * address): the only place a failed bridge can pay back. `pointsAddress` defaults to the
+   * connected wallet, as in the app; pass null to credit no one.
+   */
+  async bridgeDeposit(p: {
+    amount: string
+    from?: BridgeOrigin
+    refundTo: string
+    receive?: BridgeReceive
+    pointsAddress?: string | null
+  }): Promise<BridgeOrder> {
+    const from = p.from ?? 'zec'
+    const status = await this.bridgeStatus()
+    if (!status.enabled) throw new Error('the Private Bridge is disabled on this server')
+    const origins = status.origins ?? ['zec', 'sol']
+    if (!origins.includes(from)) throw new Error(`the bridge does not accept deposits from "${from}" (offers: ${origins.join(', ')})`)
+    const options = await this.bridgeReceiveOptions(from)
+    const receive = p.receive ?? options[0]
+    if (!options.includes(receive)) {
+      throw new Error(`a deposit from "${from}" cannot become "${receive}" (offers: ${options.join(', ')})`)
+    }
+    const pointsAddress = p.pointsAddress === undefined ? await this.address() : p.pointsAddress
+    return this.bridgeApi.createOrder(
+      {
+        amount: p.amount,
+        origin: from,
+        refundTo: p.refundTo.trim(),
+        mode: 'vault',
+        ...(pointsAddress ? { pointsAddress } : {}),
+        receive,
+      },
+      // Joins this account's bridge history when signed in; the bridge works either way.
+      await this.bridgeApi.ownerHeader(this.keys),
+    )
+  }
+
+  /** One order, as the server sees it now. */
+  bridgeOrder(token: string): Promise<BridgeOrder> {
+    return this.bridgeApi.order(token)
+  }
+
+  /**
+   * Finish a deposit whose funds have landed ('waiting_signature'): prove a deposit of
+   * exactly what arrived, into OUR notes, and hand the proof to the server, which pays its
+   * gas from the order's one-time address. The server never sees a key.
+   */
+  async bridgeShield(token: string, onProgress: ProgressFn = () => {}): Promise<{ txHash: string; asset: string; amount: string }> {
+    this.requireKeys()
+    const [order, funds] = await Promise.all([this.bridgeApi.order(token), this.bridgeApi.funds(token)])
+    if (!order.vault) throw new Error('this order pays a wallet directly; there is nothing to shield')
+    // The server's own recorded figure — the one its submit check compares the proof to.
+    const amount = BigNumber.from(funds.arrivedWei ?? order.arrivedWei ?? funds.depositableWei)
+    if (amount.isZero()) throw new Error('nothing has arrived on this order yet')
+    const kind: BridgeReceive = funds.asset ?? order.receive ?? 'eth'
+    const asset = kind === 'eth' ? this.nativeAsset() : bridgeAsset(await this.bridgeStatus(), kind)
+    if (!asset) throw new Error(`${kind} is not available on this server`)
+    this.addAsset(asset)
+
+    return this.lock(async () => {
+      const baseline = await this.lastLeafIndex(asset)
+      const built = await this.buildDepositProof(asset, amount, onProgress)
+      onProgress('Submitting the shielded deposit…')
+      const res = await this.bridgeApi.shield(token, {
+        assetId: asset.assetId.toString(),
+        inEpoch: built.inEpoch,
+        args: built.args,
+        extData: built.extData,
+      })
+      onProgress('Waiting for the note to be indexed…')
+      await this.waitForIndexed(asset.key, baseline)
+      return { txHash: res.txHash, asset: asset.key, amount: this.formatAmount(asset, amount) }
+    })
+  }
+
+  /**
+   * Follow a deposit to the end: poll, shield the moment it is 'waiting_signature', and
+   * return the order once it is final ('done', 'refunded', 'failed', 'expired') or the
+   * timeout passes (then it is returned as it stands — nothing is lost by stopping, the
+   * funds wait on the order's own address and this can be called again later).
+   */
+  async bridgeComplete(
+    token: string,
+    opts: { timeoutMs?: number; pollMs?: number; onProgress?: ProgressFn; onUpdate?: (o: BridgeOrder) => void } = {},
+  ): Promise<{ order: BridgeOrder; shieldTx: string | null }> {
+    const deadline = Date.now() + (opts.timeoutMs ?? 30 * 60_000)
+    const pollMs = opts.pollMs ?? 10_000
+    const onProgress = opts.onProgress ?? (() => {})
+    let shieldTx: string | null = null
+    let order = await this.bridgeApi.order(token)
+    for (;;) {
+      opts.onUpdate?.(order)
+      if (order.status === 'waiting_signature' && !shieldTx && order.direction === 'deposit') {
+        shieldTx = (await this.bridgeShield(token, onProgress)).txHash
+        order = await this.bridgeApi.order(token)
+        continue
+      }
+      if (isFinalBridgeStatus(order.status) || Date.now() >= deadline) return { order, shieldTx }
+      await new Promise((r) => setTimeout(r, pollMs))
+      try {
+        order = await this.bridgeApi.order(token)
+      } catch {
+        /* transient — keep the last known state and poll again */
+      }
+    }
+  }
+
+  /**
+   * Bridge out of the pool: a relayed withdrawal of `amount` pays the order's `payTo`, and
+   * the bridge pays out on the destination chain. Nothing touches this wallet's public
+   * balance. `asset` is what the vault pays: ETH, or wZEC (redeemed by the keeper; ZEC
+   * destinations only). `destination` is an address on the `to` chain; `refundAddress`
+   * (an EVM address here) defaults to the connected wallet.
+   */
+  async bridgeWithdraw(
+    p: { amount: string; to?: BridgeOrigin; destination: string; asset?: 'eth' | 'wzec'; refundAddress?: string },
+    onProgress: ProgressFn = () => {},
+  ): Promise<{ order: BridgeOrder; txHash: string }> {
+    this.requireKeys()
+    const status = await this.bridgeStatus()
+    if (!status.enabled) throw new Error('the Private Bridge is disabled on this server')
+    const kind = p.asset ?? 'eth'
+    const asset = kind === 'eth' ? this.nativeAsset() : bridgeAsset(status, kind)
+    if (!asset) throw new Error(`${kind} is not available on this server`)
+    const refundAddress = p.refundAddress ?? (await this.address())
+    if (!refundAddress || !ethers.utils.isAddress(refundAddress)) {
+      throw new Error('bridgeWithdraw needs a refundAddress (an EVM address on this chain) or a signer')
+    }
+    const amountWei = this.parseAmount(asset, p.amount)
+
+    onProgress('Reserving the bridge route…')
+    const order = await this.bridgeApi.createWithdrawOrder(
+      { amountWei: amountWei.toString(), destination: p.destination.trim(), refundAddress, origin: p.to ?? 'zec', receive: kind },
+      await this.bridgeApi.ownerHeader(this.keys),
+    )
+    if (!order.payTo || !ethers.utils.isAddress(order.payTo)) throw new Error('the bridge did not return a payment address')
+    // The vault pays the bridge directly: one transaction, and the recipient gets exactly
+    // `amount` (the relayer fee comes out of the note on top).
+    const txHash = await this.withdraw(asset.key, amountWei, order.payTo, onProgress)
+    return { order, txHash }
+  }
+
+  /** Where an order's money actually is (read from the chains, not the status). */
+  bridgeResumePoint(token: string): Promise<BridgeResumePoint> {
+    return this.bridgeApi.resumePoint(token)
+  }
+
+  /** Pick a stalled order up from wherever it stopped. 'sign' means: call bridgeShield. */
+  bridgeResume(token: string): Promise<BridgeResumePoint> {
+    return this.bridgeApi.resume(token)
+  }
+
+  /** This account's bridge orders, newest first (pseudonymous; needs signIn). */
+  bridgeHistory(): Promise<BridgeOrder[]> {
+    return this.bridgeApi.history(this.requireKeys())
+  }
+
+  /** File an order made elsewhere (another device, the web app) under this account. */
+  bridgeClaim(token: string): Promise<boolean> {
+    return this.bridgeApi.claim(token, this.requireKeys())
+  }
+
+  private nativeAsset(): Asset {
+    const a = listAssets().find(isNativeAsset)
+    if (!a) throw new Error('no native asset in the bundled deployment')
+    return a
   }
 
   // Read amountOut (Y) from a swap receipt's Swap event.

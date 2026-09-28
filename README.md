@@ -95,6 +95,50 @@ For devs building custom flows, the SDK also exports `Keypair`, `Utxo`, `deriveK
 helpers (`resolveRoute`, `quoteAmountOut`, `encodeV3SingleRoute`, …), the ABIs, and the
 `SherwoodApi` HTTP client.
 
+## Private Bridge (ZEC / SOL / BTC)
+
+Bring ZEC, SOL or BTC straight into a **shielded** balance, or pay a shielded balance out to
+one of those chains, without the wallet ever showing up on chain.
+
+```ts
+await sherwood.signIn()
+
+// IN: open an order, send the coin to its deposit address, let the SDK shield it.
+const order = await sherwood.bridgeDeposit({
+  from: 'btc',               // 'zec' | 'sol' | 'btc'
+  amount: '0.01',
+  refundTo: 'bc1q…',         // an address ON THE ORIGIN CHAIN, for a failed bridge
+  receive: 'cbbtc',          // 'eth' | 'wzec' (from zec/sol) | 'cbbtc' = wBTC (from btc)
+})
+// → send order.amountInFormatted to order.depositAddress (+ order.depositMemo if set)
+const { order: final } = await sherwood.bridgeComplete(order.token) // polls, then shields
+
+// OUT: one relayed withdrawal pays the bridge; the coin arrives on the other chain.
+await sherwood.bridgeWithdraw({ to: 'zec', amount: '0.2', destination: 't1…', asset: 'eth' })
+```
+
+How it stays private: a deposit is always a **vault order**. The bridge pays a one-time
+address the server derives; when the funds land (`waiting_signature`) the SDK builds a
+deposit proof for exactly what arrived, **locally, from your note keys**, and the server
+pays its gas from that one-time address. The server funds a note it can neither read nor
+spend. An exit is a normal relayed withdrawal whose recipient is the order's `payTo`.
+
+| method | what it does |
+|---|---|
+| `bridgeStatus()` | origins, receive modes, confidentiality; registers wZEC / cbBTC as assets |
+| `bridgeQuote({ amount, from, receive })` | what a deposit becomes, and roughly how long it takes |
+| `bridgeDeposit({ amount, from, refundTo, receive? })` | open a vault order → deposit address |
+| `bridgeComplete(token, { timeoutMs? })` | poll and shield when ready; returns the final order |
+| `bridgeShield(token)` | shield now (order must be `waiting_signature`) |
+| `bridgeWithdraw({ amount, to, destination, asset?, refundAddress? })` | bridge out of the pool |
+| `bridgeOrder(token)` / `bridgeResume(token)` / `bridgeResumePoint(token)` | track / unstick an order |
+| `bridgeHistory()` / `bridgeClaim(token)` | orders filed under your pseudonym |
+
+Nothing is lost by stopping mid-way: the funds wait on the order's own address, and
+`bridgeComplete(token)` picks it up later. The history hangs off a pseudonym derived from
+the note encryption key (`sherwood.zcash.identity.v1`), identical to the web app's, so an
+agent and a browser on the same wallet see the same orders. See `examples/bridge.mjs`.
+
 ## Notes for agents
 
 - **Custody is yours.** The backend never holds a key; it only serves note data and relays
