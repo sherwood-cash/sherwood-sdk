@@ -1,10 +1,12 @@
 {
   "name": "@sherwood-cash/sdk",
   "version": "0.2.0",
-  "description": "Headless Node SDK for Sherwood Cash — deposit, scan your private balance, swap, withdraw and bridge ZEC/SOL/BTC privately on the Sherwood ZK privacy pool + shielded DEX (Robinhood Chain).",
+  "description": "Headless Node SDK for Sherwood Cash — deposit, scan your private balance, swap, withdraw, bridge ZEC/SOL/BTC and cash out to fiat (P2P via Peer) privately on the Sherwood ZK privacy pool + shielded DEX (Robinhood Chain).",
   "license": "MIT",
   "type": "module",
-  "publishConfig": { "access": "public" },
+  "publishConfig": {
+    "access": "public"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -13,7 +15,10 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "prepare": "npm run build",
@@ -23,11 +28,13 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@zkp2p/cash": "^0.6.2",
     "ethers": "^5.7.2",
     "ffjavascript": "^0.2.63",
     "fixed-merkle-tree": "^0.7.3",
     "poseidon-lite": "^0.2.0",
-    "snarkjs": "^0.7.5"
+    "snarkjs": "^0.7.5",
+    "viem": "^2.57.2"
   },
   "devDependencies": {
     "@types/node": "^20.11.0",

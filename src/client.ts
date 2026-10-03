@@ -22,6 +22,7 @@ import {
   type BridgeResumePoint,
   type BridgeStatus,
 } from './bridge.js'
+import { P2PApi, P2P_NATIVE, baseUsdcBalance, cashoutAddress, cashoutSigner, isFinalP2PStatus, peerCash, receiveLeg, scanCashoutSlots, type P2POrder } from './p2p.js'
 import {
   DEPLOYMENT,
   DEFAULT_API_URL,
@@ -65,6 +66,7 @@ export class SherwoodClient {
   readonly api: SherwoodApi
   /** The Private Bridge endpoints (/zcash/*). The bridge* methods below drive them. */
   readonly bridgeApi: BridgeApi
+  readonly p2pApi: P2PApi
   readonly provider: ethers.providers.JsonRpcProvider
   signer?: ethers.Signer
   keys?: DerivedKeys
@@ -73,6 +75,7 @@ export class SherwoodClient {
   constructor(opts: SherwoodClientOptions = {}) {
     this.api = new SherwoodApi(opts.apiUrl || DEFAULT_API_URL)
     this.bridgeApi = new BridgeApi(opts.apiUrl || DEFAULT_API_URL)
+    this.p2pApi = new P2PApi(opts.apiUrl || DEFAULT_API_URL)
     this.provider = new ethers.providers.JsonRpcProvider(opts.rpcUrl || DEPLOYMENT.rpcUrl, {
       chainId: DEPLOYMENT.chainId,
       name: DEPLOYMENT.network,
@@ -716,6 +719,117 @@ export class SherwoodClient {
   /** File an order made elsewhere (another device, the web app) under this account. */
   bridgeClaim(token: string): Promise<boolean> {
     return this.bridgeApi.claim(token, this.requireKeys())
+  }
+
+  /* ---------------- P2P cash-out (Peer, fiat) ---------------- */
+
+  /** Whether the server offers P2P cash-outs, and for ERC-20s (`tokens`) or only ETH. */
+  p2pStatus(): Promise<{ enabled: boolean; tokens: boolean }> {
+    return this.p2pApi.status()
+  }
+
+  /** Peer's 30-day fill counts and median first-fill time per `platform:currency`. */
+  async p2pFillStats(): Promise<Record<string, { fills: number; medianFillSeconds?: number }>> {
+    return (await this.p2pApi.fillStats()).stats
+  }
+
+  /** Base USDC that `amount` of `asset` becomes before it is listed on Peer (min 20 USDC). */
+  async p2pQuote(idOrKey: string, amount: string): Promise<{ usdcOut: string; eta: number }> {
+    const asset = this.asset(idOrKey)
+    const q = await this.p2pApi.quote(isNativeAsset(asset) ? P2P_NATIVE : asset.token, this.parseAmount(asset, amount).toBigInt())
+    return { usdcOut: ethers.utils.formatUnits(q.usdcOut, 6), eta: q.eta }
+  }
+
+  /**
+   * Cash out of the pool to fiat: open an order, pay its one-time address with a relayed
+   * vault withdrawal, and let the server bridge it to a fresh Base cash-out address. Then
+   * call p2pList(order.token) to put the USDC on Peer for `handle` on `platform` (e.g.
+   * "venmo", "revolut", "wise") in `fiat`. `refundTo` defaults to the connected wallet.
+   */
+  async p2pCashout(
+    p: { asset: string; amount: string; platform: string; handle: string; fiat?: string; refundTo?: string },
+    onProgress: ProgressFn = () => {},
+  ): Promise<{ order: P2POrder; txHash: string }> {
+    const keys = this.requireKeys()
+    const asset = this.asset(p.asset)
+    const refundTo = p.refundTo ?? (await this.address())
+    if (!refundTo || !ethers.utils.isAddress(refundTo)) throw new Error('p2pCashout needs a refundTo (an EVM address on this chain) or a signer')
+    const root = keys.keypair.privkey
+    const auth = await this.bridgeApi.ownerHeader(keys)
+    onProgress('Picking a fresh cash-out address…')
+    const open = (await this.p2pApi.history(auth)).filter((o) => !isFinalP2PStatus(o.status)).map((o) => o.slot)
+    const { next: slot } = await scanCashoutSlots(root, open)
+    const amountWei = this.parseAmount(asset, p.amount)
+    const order = await this.p2pApi.createOrder(
+      {
+        currency: isNativeAsset(asset) ? P2P_NATIVE : asset.token,
+        symbol: asset.symbol,
+        decimals: asset.decimals,
+        amount: amountWei.toString(),
+        recipient: cashoutAddress(root, slot),
+        slot,
+        refundTo,
+        platform: p.platform,
+        handle: p.handle,
+        fiat: p.fiat ?? 'USD',
+      },
+      auth,
+    )
+    const txHash = await this.withdraw(asset.key, amountWei, order.payTo, onProgress)
+    return { order: await this.p2pApi.markSent(order.token, txHash).catch(() => order), txHash }
+  }
+
+  /**
+   * Wait for an order's USDC to land on Base, then list it on Peer from its cash-out
+   * address (signed here; the key never leaves). Returns the order once listed or final,
+   * or as it stands at the timeout — call again later, nothing is lost.
+   */
+  async p2pList(token: string, opts: { timeoutMs?: number; pollMs?: number; railCurrencies?: string[] } = {}): Promise<P2POrder> {
+    const root = this.requireKeys().keypair.privkey
+    const deadline = Date.now() + (opts.timeoutMs ?? 30 * 60_000)
+    for (;;) {
+      const o = await this.p2pApi.order(token)
+      if (o.status === 'delivered') {
+        if (cashoutAddress(root, o.slot).toLowerCase() !== o.recipient.toLowerCase()) throw new Error('this cash-out belongs to another account')
+        const amount = await baseUsdcBalance(o.recipient)
+        if (amount === 0n) throw new Error('no USDC on the cash-out address')
+        const res = await (await peerCash()).cashout(
+          { amount, receive: receiveLeg(o.platform, o.fiat, o.handle, opts.railCurrencies) },
+          { signer: cashoutSigner(root, o.slot) },
+        )
+        return this.p2pApi.markListed(token, res.depositId)
+      }
+      if (isFinalP2PStatus(o.status) || Date.now() >= deadline) return o
+      await new Promise((r) => setTimeout(r, opts.pollMs ?? 10_000))
+    }
+  }
+
+  /** One cash-out order, as the server sees it now. */
+  p2pOrder(token: string): Promise<P2POrder> {
+    return this.p2pApi.order(token)
+  }
+
+  /** The Peer side of a listed order: fills, remaining USDC, state. */
+  async p2pPeerOrder(depositId: string) {
+    return (await peerCash()).order(depositId)
+  }
+
+  /** Close a Peer listing and take the unsold USDC back to its cash-out address. */
+  async p2pUnlist(token: string) {
+    const root = this.requireKeys().keypair.privkey
+    const o = await this.p2pApi.order(token)
+    if (!o.peerDepositId) throw new Error('this order is not listed on Peer')
+    return (await peerCash()).withdraw(o.peerDepositId, { signer: cashoutSigner(root, o.slot) })
+  }
+
+  /** Pull a cash-out stuck for over an hour back to its refundTo. */
+  p2pRefund(token: string): Promise<P2POrder> {
+    return this.p2pApi.refund(token)
+  }
+
+  /** This account's cash-outs, newest first (pseudonymous; needs signIn). */
+  async p2pHistory(): Promise<P2POrder[]> {
+    return this.p2pApi.history(await this.bridgeApi.ownerHeader(this.requireKeys()))
   }
 
   private nativeAsset(): Asset {

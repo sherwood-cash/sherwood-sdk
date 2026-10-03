@@ -17,6 +17,9 @@ export type {
   BridgeResumePoint,
   BridgeTokenInfo,
 } from './bridge.js'
+// P2P cash-out (vault -> Base USDC -> Peer -> fiat)
+export { P2PApi, P2PApiError, isFinalP2PStatus, receiveLeg, cashoutAddress, scanCashoutSlots, BASE_USDC } from './p2p.js'
+export type { P2POrder, P2PStatus, CashoutSlot } from './p2p.js'
 export type { RelayInfo, RelayProof, RelayExtData, RelaySwapParams, CommitmentLeaf } from './api.js'
 
 // Config / assets
