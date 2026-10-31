@@ -1,6 +1,6 @@
 {
   "name": "@sherwood-cash/sdk",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Headless Node SDK for Sherwood Cash — deposit, scan your private balance, swap, withdraw, bridge ZEC/SOL/BTC and cash out to fiat (P2P via Peer) privately on the Sherwood ZK privacy pool + shielded DEX (Robinhood Chain).",
   "license": "MIT",
   "type": "module",
@@ -28,6 +28,9 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@coral-xyz/anchor": "^0.31.1",
+    "@solana/spl-token": "^0.4.0",
+    "@solana/web3.js": "^1.98.4",
     "@zkp2p/cash": "^0.6.2",
     "ethers": "^5.7.2",
     "ffjavascript": "^0.2.63",

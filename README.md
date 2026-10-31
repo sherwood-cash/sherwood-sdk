@@ -161,3 +161,18 @@ exposes `get_status`, `get_balances`, `quote_swap`, `deposit`, `swap`, `withdraw
 ## License
 
 MIT
+
+## Solana
+
+The same pool runs on Solana (same circuit, same keys). Everything is under the `solana` namespace:
+
+```js
+import { solana } from '@sherwood-cash/sdk'
+
+solana.configureSolana({ apiUrl: 'https://api.sherwood.cash', programId: '<pinned program id>' })
+const keys = await solana.deriveSolanaKeys((msg) => wallet.signMessage(msg))
+const { balance } = await solana.scanNotes(keys, 'SOL')
+```
+
+Deposits are signed by your `SolanaWallet` (`publicKey` + `signTransaction`); withdrawals, swaps
+and merges are proved locally and sent through `/solana/relay`.

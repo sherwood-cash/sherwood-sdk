@@ -85,3 +85,6 @@ export {
 export type { SwapRoute } from './swap.js'
 
 export { VAULT_ABI, ERC20_ABI, SWAP_PARAMS_TUPLE } from './abis.js'
+
+// Sherwood on Solana: deposit (wallet-signed), scan, withdraw, swap and merge (relayed).
+export * as solana from './solana.js'

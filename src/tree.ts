@@ -141,7 +141,12 @@ export interface NoteSelection {
  * inputs, all sharing ONE tree (one asset AND one epoch). When no single epoch covers the
  * amount but the total does, returns a migration step instead of failing.
  */
-export function selectNotes(notes: Utxo[], amount: BigNumber, liveEpoch = 0): NoteSelection {
+export function selectNotes(
+  notes: Utxo[],
+  amount: BigNumber,
+  liveEpoch = 0,
+  { mergeSpare = false }: { mergeSpare?: boolean } = {},
+): NoteSelection {
   if (sum(notes).lt(amount)) {
     throw new Error('Insufficient shielded balance for this amount plus the relayer fee')
   }
@@ -155,7 +160,8 @@ export function selectNotes(notes: Utxo[], amount: BigNumber, liveEpoch = 0): No
 
   for (const epoch of epochs) {
     const sorted = [...byEpoch.get(epoch)!].sort(desc)
-    const inputs = sorted[0].amount.gte(amount) ? [sorted[0]] : sorted.slice(0, 2)
+    // mergeSpare: use the spare input slot to fold a second note into the change.
+    const inputs = sorted[0].amount.gte(amount) && !mergeSpare ? [sorted[0]] : sorted.slice(0, 2)
     if (sum(inputs).gte(amount)) return { epoch, inputs, needsMigration: false }
   }
 
