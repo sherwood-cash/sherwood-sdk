@@ -139,6 +139,78 @@ Nothing is lost by stopping mid-way: the funds wait on the order's own address, 
 the note encryption key (`sherwood.zcash.identity.v1`), identical to the web app's, so an
 agent and a browser on the same wallet see the same orders. See `examples/bridge.mjs`.
 
+## Solana
+
+The same pool also runs on **Solana** (same circuit, same note keys). Everything lives under the
+`solana` namespace: plain functions rather than a client class. Amounts are `bigint`s in base units
+(lamports for SOL, 10^-6 for USDC). `'SOL'` is accepted anywhere a mint is expected.
+
+### Setup
+
+```ts
+import { solana } from '@sherwood-cash/sdk'
+import { Keypair, VersionedTransaction, Transaction } from '@solana/web3.js'
+import nacl from 'tweetnacl'
+
+solana.configureSolana({
+  apiUrl: 'https://api.sherwood.cash',                         // default
+  programId: 'GiZYK8HpC75FGAAamAiJryMrykGQAJ91gEGGtxzgtCmJ',  // mainnet: pin it, so a hostile backend cannot redirect deposits
+  // rpcUrl: 'https://…',   // optional, defaults to the public RPC of the backend's cluster
+  // artifacts: { wasm, zkey }, // optional, same circuit files as the EVM client
+})
+
+// Any object with publicKey + signTransaction works (wallet adapter, Keypair wrapper…).
+const kp = Keypair.fromSecretKey(/* your 64-byte secret */)
+const wallet: solana.SolanaWallet = {
+  publicKey: kp.publicKey,
+  async signTransaction(tx) {
+    tx instanceof VersionedTransaction ? tx.sign([kp]) : (tx as Transaction).partialSign(kp)
+    return tx
+  },
+}
+
+// Shielded account keys: one deterministic ed25519 signature, same account on every device.
+const keys = await solana.deriveSolanaKeys(async (msg) => nacl.sign.detached(msg, kp.secretKey))
+```
+
+### Actions
+
+```ts
+const SOL = 'SOL'
+const USDC = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+
+// Public wallet balances, per configured mint.
+await solana.walletBalances(wallet.publicKey)
+
+// Deposit 0.1 SOL. Signed and paid by YOUR wallet (needs SOL for rent + fees).
+await solana.deposit({ keys, wallet, mint: SOL, amount: 100_000_000n })
+
+// Private balance: scans the trees and trial-decrypts your notes.
+const { balance, notes } = await solana.scanNotes(keys, SOL)
+
+// Private swap SOL -> USDC. Relayed: your wallet never appears.
+const quote = await solana.quoteSwap({ mintIn: SOL, mintOut: USDC, amountIn: 50_000_000n })
+await solana.swap({ keys, mintIn: SOL, mintOut: USDC, amountIn: 50_000_000n, quote, slippageBps: 100 })
+
+// Withdraw 5 USDC to any address. Relayed; protocol + relayer fees come out of the notes.
+await solana.withdraw({ keys, mint: USDC, amount: 5_000_000n, recipient: '<base58 address>' })
+
+// Consolidate notes (into the live epoch). Returns null when there is nothing to merge.
+await solana.merge({ keys, mint: USDC })
+```
+
+Every action returns the transaction signature.
+
+- **Which side signs:** `deposit` is signed by your wallet. `withdraw`, `swap` and `merge` are
+  proved locally and POSTed to `/solana/relay`, so the fee payer is the relayer.
+- **Quote assets only** (`quote: true` in `solana.getSolanaParams().assets`) can be deposited or withdrawn. Other tokens are
+  swap-only: swap them back to a quote first. The same call returns the fees.
+- **`SolanaMergeRequired`**: thrown when the balance is split across epochs or more than 2 notes.
+  Call `merge()` and retry. Merging a non-quote token needs `wallet` (it cannot pay a relayer fee).
+- **`SolanaInsufficientSol`**: the wallet cannot cover the deposit's rent + fees (`need` / `have` in lamports).
+- **Tests and self-hosting:** each function takes an optional last `ctx` argument
+  (`{ params, source, connection, submit }`) to override the backend.
+
 ## Notes for agents
 
 - **Custody is yours.** The backend never holds a key; it only serves note data and relays
@@ -161,18 +233,3 @@ exposes `get_status`, `get_balances`, `quote_swap`, `deposit`, `swap`, `withdraw
 ## License
 
 MIT
-
-## Solana
-
-The same pool runs on Solana (same circuit, same keys). Everything is under the `solana` namespace:
-
-```js
-import { solana } from '@sherwood-cash/sdk'
-
-solana.configureSolana({ apiUrl: 'https://api.sherwood.cash', programId: '<pinned program id>' })
-const keys = await solana.deriveSolanaKeys((msg) => wallet.signMessage(msg))
-const { balance } = await solana.scanNotes(keys, 'SOL')
-```
-
-Deposits are signed by your `SolanaWallet` (`publicKey` + `signTransaction`); withdrawals, swaps
-and merges are proved locally and sent through `/solana/relay`.
